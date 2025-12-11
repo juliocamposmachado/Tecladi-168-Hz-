@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Tecladi 168 Hz — Cordas Vibrantes (Karplus-Strong)</title>
+<meta name="description" content="Teclado virtual centrado em 168 Hz; cada tecla pluck (corda vibrante) com síntese Karplus-Strong e animação da corda." />
+<style>
+  :root{
+    --bg:#071026; --card:#0b1220; --muted:#9fb0d6; --accent:#7c3aed;
+    --white:#f8fafc; --panel:#071C2E;
+  }
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial,sans-serif;background:linear-gradient(180deg,#041025 0%, #071026 100%);color:var(--white)}
+  .wrap{max-width:1100px;margin:18px auto;padding:18px}
+  .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:18px;border:1px solid rgba(255,255,255,0.03)}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  h1{font-size:20px;margin:0}
+  p.lead{margin:4px 0 12px;color:var(--muted)}
+  .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  button.primary{background:var(--accent);border:none;padding:10px 14px;border-radius:8px;color:white;cursor:pointer}
+  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:white;padding:8px 12px;border-radius:8px;cursor:pointer}
+  .panel{margin-top:12px;padding:12px;background:rgba(255,255,255,0.02);border-radius:8px;border:1px solid rgba(255,255,255,0.02)}
+  label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
+  select,input[type="range"],input[type="number"]{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--white);padding:6px;border-radius:6px}
+  .keyboard{margin-top:14px;display:block;user-select:none}
+  .white-keys{display:flex;gap:6px}
+  .white{width:56px;height:190px;background:#fff;color:#071026;border-radius:6px;display:flex;align-items:flex-end;justify-content:center;font-weight:700;cursor:pointer;position:relative}
+  .white:active{transform:translateY(2px)}
+  .kbd-note{font-size:11px;color:var(--muted);margin-bottom:8px}
+  .controls-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .canvasWrap{margin-top:16px;background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00));padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.02)}
+  canvas{width:100%;height:220px;background:#010214;border-radius:6px;display:block}
+  .footer{margin-top:12px;color:var(--muted);font-size:13px}
+  .row{display:flex;gap:12px;align-items:center}
+  @media (max-width:720px){
+    .white{width:40px;height:140px}
+    canvas{height:160px}
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <header>
+        <div>
+          <h1>Tecladi 168 Hz — Cordas Vibrantes</h1>
+          <p class="lead">Teclado virtual com síntese de corda (Karplus–Strong). Cada tecla pluck faz vibrar uma corda sintética afinada em relação a <strong>168 Hz</strong>. Inclui animação visual da corda.</p>
+        </div>
+        <div class="controls">
+          <button id="toggleKeyboard" class="primary">Tecladi</button>
+          <button id="stopAll" class="ghost">Parar Todos</button>
+        </div>
+      </header>
+
+      <div class="panel" id="config">
+        <div class="controls-row">
+          <div>
+            <label for="octave">Oitava (base)</label>
+            <select id="octave">
+              <option value="-1">-1</option>
+              <option value="0" selected>0 (168 Hz)</option>
+              <option value="1">+1</option>
+              <option value="2">+2</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="harmony">Modo Harmônico</label>
+            <select id="harmony">
+              <option value="chromatic">Cromático (12-TET)</option>
+              <option value="major">Maior</option>
+              <option value="minor">Menor</option>
+              <option value="pentatonic">Pentatônica</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="pluckPos">Posição do Pizzicato (%)</label>
+            <input id="pluckPos" type="range" min="5" max="95" value="20">
+          </div>
+
+          <div>
+            <label for="damping">Damping (decay)</label>
+            <input id="damping" type="range" min="0.95" max="0.999" step="0.0005" value="0.996">
+          </div>
+
+          <div>
+            <label for="volume">Volume</label>
+            <input id="volume" type="range" min="0" max="1" step="0.01" value="0.6">
+          </div>
+        </div>
+      </div>
+
+      <section id="keyboardArea" class="keyboard" aria-hidden="true" style="display:none;">
+        <div id="keysContainer"></div>
+        <p class="footer">Clique nas teclas ou use o teclado físico (A..K / W..U) para tocar. Cada tecla pluck anima uma corda no canvas abaixo.</p>
+
+        <div class="canvasWrap">
+          <canvas id="stringCanvas" width="980" height="220"></canvas>
+        </div>
+      </section>
+    </div>
+  </div>
+
+<script>
+/*
+  Tecladi 168Hz - Plucked Strings using Karplus-Strong
+  - Reference base: 168 Hz
+  - Each key triggers a KS string synth and animates the string via canvas
+  - Polyphonic (multiple active voices)
+*/
+
+(() => {
+  // Audio setup
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioCtx();
+  const master = ctx.createGain(); master.gain.value = 0.6; master.connect(ctx.destination);
+
+  // UI elements
+  const toggleBtn = document.getElementById('toggleKeyboard');
+  const keyboardArea = document.getElementById('keyboardArea');
+  const keysContainer = document.getElementById('keysContainer');
+  const octaveSel = document.getElementById('octave');
+  const harmonySel = document.getElementById('harmony');
+  const pluckPos = document.getElementById('pluckPos');
+  const dampingRange = document.getElementById('damping');
+  const volumeRange = document.getElementById('volume');
+  const stopAllBtn = document.getElementById('stopAll');
+
+  // Canvas / animation
+  const canvas = document.getElementById('stringCanvas');
+  const cctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // Reference
+  const BASE = 168.0;
+
+  // keyboard mapping (physical keys)
+  const physKeys = ['a','w','s','e','d','f','t','g','y','h','u','j','k','o','l','p',';','\''];
+
+  // harmony presets (semitones)
+  const harmonyPresets = {
+    'chromatic': Array.from({length:24}, (_,i)=>i-12), // -12..+11
+    'major': [0,2,4,5,7,9,11,12],
+    'minor': [0,2,3,5,7,8,10,12],
+    'pentatonic': [0,2,4,7,9,12]
+  };
+
+  let shown = false;
+  let activeVoices = []; // {freq, node, outputGain, buffer, animationState}
+  let volume = parseFloat(volumeRange.value);
+
+  // Karplus-Strong implementation using ScriptProcessor-like via AudioWorklet or using AudioBufferSourceNode + PeriodicUpdate
+  // For compatibility without worklets, implement KS as AudioBuffer filled with noise and looped with feedback via a Biquad?
+  // We'll implement a hybrid: create a DelayNode with Feedback (Gain) and a noise burst into it; approximate KS.
+
+  // Utility: frequency for semitone steps from base
+  function semitoneFreq(base, n){ return base * Math.pow(2, n/12); }
+
+  // Build keyboard UI
+  function buildKeyboard(){
+    keysContainer.innerHTML = '';
+    const octave = parseInt(octaveSel.value,10);
+    const base = BASE * Math.pow(2, octave);
+    const mode = harmonySel.value;
+    const intervals = harmonyPresets[mode] || harmonyPresets.chromatic;
+
+    const whiteWrap = document.createElement('div');
+    whiteWrap.className = 'white-keys';
+    intervals.forEach((interval, idx) => {
+      const freq = semitoneFreq(base, interval);
+      const label = `${Math.round(freq)} Hz`;
+      const btn = document.createElement('button');
+      btn.className = 'white';
+      btn.setAttribute('data-freq', freq);
+      btn.innerHTML = `<div class="kbd-note">${label}</div>`;
+      btn.addEventListener('mousedown', ()=> pluck(freq));
+      btn.addEventListener('touchstart', (e)=>{ e.preventDefault(); pluck(freq); }, {passive:false});
+      btn.addEventListener('mouseup', ()=> stopVoice(freq));
+      btn.addEventListener('mouseleave', ()=> stopVoice(freq));
+      whiteWrap.appendChild(btn);
+    });
+    keysContainer.appendChild(whiteWrap);
+  }
+
+  // Pluck function: create delay feedback loop with noise burst
+  function pluck(freq){
+    if(ctx.state === 'suspended') ctx.resume();
+    // limit polyphony (optional)
+    const maxVoices = 24;
+    if(activeVoices.length > 48) return;
+
+    const now = ctx.currentTime;
+
+    // Create nodes
+    const noiseBuf = ctx.createBuffer(1, Math.round(ctx.sampleRate * 1.0), ctx.sampleRate);
+    const data = noiseBuf.getChannelData(0);
+    // fill with white noise shaped by pluck position
+    const pos = parseFloat(pluckPos.value)/100;
+    for(let i=0;i<data.length;i++){
+      // shaped noise: windowing for pluck-like burst
+      const win = Math.exp(-5 * i/data.length);
+      data[i] = (Math.random()*2-1) * win * (0.6 - 0.5*Math.abs(Math.sin(i*3.1415*(1-pos))));
+    }
+    const noiseSource = ctx.createBufferSource();
+    noiseSource.buffer = noiseBuf;
+    noiseSource.loop = false;
+
+    // delay length = sampleRate / freq
+    const delay = ctx.createDelay();
+    const delayTime = 1.0/freq;
+    // But to be stable, limit delay to something reasonable (min 1/sampleRate)
+    delay.delayTime.value = delayTime;
+
+    // feedback filter (lowpass) to simulate damping
+    const feedback = ctx.createGain();
+    const damping = parseFloat(dampingRange.value); // near 1
+    feedback.gain.value = damping;
+
+    // lowpass filter in the feedback path to simulate string loss
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    // set cutoff proportional to freq
+    lp.frequency.value = Math.min(8000, freq*6 + 800);
+    lp.Q.value = 0.7;
+
+    // output gain (per voice)
+    const outGain = ctx.createGain();
+    outGain.gain.value = volume * 0.9;
+
+    // connect: noise -> (pick) -> delay -> lp -> feedback -> delay ; delay -> outGain -> master
+    noiseSource.connect(delay);
+    delay.connect(lp);
+    lp.connect(feedback);
+    feedback.connect(delay);
+
+    delay.connect(outGain);
+    outGain.connect(master);
+
+    // Start noise burst
+    noiseSource.start(now);
+    // Stop noise after short burst
+    noiseSource.stop(now + 0.02);
+
+    // create an auto release to fade the voice from the feedback loop by reducing feedback.gain slowly
+    const releaseTime = 4 + Math.random()*2; // seconds
+    // schedule to reduce feedback
+    feedback.gain.setValueAtTime(damping, now);
+    feedback.gain.exponentialRampToValueAtTime(0.0005, now + releaseTime);
+
+    // Schedule disconnect cleanup
+    setTimeout(()=> {
+      try {
+        feedback.disconnect();
+        delay.disconnect();
+        outGain.disconnect();
+      } catch(e){}
+      // remove from activeVoices later
+    }, (releaseTime+1)*1000);
+
+    // store voice info for animation
+    const voice = {freq, start:now, delayTime, noiseSource, delay, feedback, lp, outGain, releaseTime, position:0, phase:0};
+    activeVoices.push(voice);
+
+    // cap voices
+    if(activeVoices.length > 80){
+      // remove oldest
+      const v = activeVoices.shift();
+      try{ v.feedback.gain.setValueAtTime(0.0001, ctx.currentTime); }catch(e){}
+    }
+
+    return voice;
+  }
+
+  function stopVoice(freq){
+    // find voices with freq and accelerate damping
+    activeVoices.forEach(v=>{
+      if(Math.abs(v.freq - freq) < 1e-6){
+        try{ v.feedback.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.05); }catch(e){}
+      }
+    });
+  }
+
+  function stopAll(){
+    activeVoices.forEach(v=>{
+      try{ v.feedback.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.02); }catch(e){}
+    });
+    activeVoices = [];
+  }
+
+  // animation loop (draw strings as sum of active voices)
+  function animate(){
+    requestAnimationFrame(animate);
+    // clear
+    cctx.clearRect(0,0,W,H);
+    // background grid
+    cctx.fillStyle = '#020416';
+    cctx.fillRect(0,0,W,H);
+
+    // Draw each active voice as separate string line with small offset
+    const now = ctx.currentTime;
+    const baseY = H/2;
+    const spacing = Math.max(6, Math.floor(H / Math.max(6, Math.min(activeVoices.length, 20))));
+
+    // For visualization, compute a simple waveform sample per voice using simple sinusoidal envelope approximation
+    cctx.lineWidth = 2;
+    activeVoices.forEach((v, idx) => {
+      // time since start
+      const t = now - v.start;
+      // amplitude envelope from feedback.gain (approx)
+      const amp = Math.max(0, Math.pow(parseFloat(dampingRange.value), t*20)); // rough
+      // frequency
+      const f = v.freq;
+      // draw a sinusoidal displacement along string x
+      const yOffset = baseY + (idx - activeVoices.length/2) * spacing;
+      cctx.beginPath();
+      for(let x=0;x<=W;x+=6){
+        const xnorm = x / W;
+        const phi = 2*Math.PI*(f * (xnorm*0.001 + t)); // phase varying along string to look like traveling wave
+        const disp = Math.sin(phi) * amp * 28 * (1 - Math.abs(2*xnorm-1)); // stronger center
+        const y = yOffset + disp;
+        if(x===0) cctx.moveTo(x,y); else cctx.lineTo(x,y);
+      }
+      // color by frequency (map)
+      const hue = Math.floor((f/1000)*180) % 360;
+      cctx.strokeStyle = `hsl(${hue} 70% 65% / ${Math.min(0.95,0.4+amp)})`;
+      cctx.stroke();
+      // dotted center line
+      cctx.beginPath();
+      cctx.setLineDash([2,6]);
+      cctx.moveTo(0,yOffset);
+      cctx.lineTo(W,yOffset);
+      cctx.strokeStyle = 'rgba(255,255,255,0.03)';
+      cctx.stroke();
+      cctx.setLineDash([]);
+    });
+
+    // fade out voices that are effectively silent
+    activeVoices = activeVoices.filter(v=>{
+      // approximate active if feedback still > threshold
+      const age = now - v.start;
+      const effective = Math.pow(parseFloat(dampingRange.value), age*20);
+      return effective > 0.0001;
+    });
+  }
+
+  // keyboard interactions
+  window.addEventListener('keydown', (e) => {
+    if(!shown) return;
+    const k = e.key.toLowerCase();
+    const idx = physKeys.indexOf(k);
+    if(idx >= 0){
+      // map index to current keys
+      const nodes = keysContainer.querySelectorAll('.white');
+      if(nodes[idx]) {
+        const f = parseFloat(nodes[idx].getAttribute('data-freq'));
+        if(f) pluck(f);
+      }
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    if(!shown) return;
+    const k = e.key.toLowerCase();
+    const idx = physKeys.indexOf(k);
+    if(idx >= 0){
+      const nodes = keysContainer.querySelectorAll('.white');
+      if(nodes[idx]) {
+        const f = parseFloat(nodes[idx].getAttribute('data-freq'));
+        if(f) stopVoice(f);
+      }
+    }
+  });
+
+  // UI handlers
+  toggleBtn.addEventListener('click', () => {
+    shown = !shown;
+    keyboardArea.style.display = shown ? 'block' : 'none';
+    toggleBtn.textContent = shown ? 'Fechar Tecladi' : 'Tecladi';
+    if(shown) buildKeyboard();
+  });
+  octaveSel.addEventListener('change', buildKeyboard);
+  harmonySel.addEventListener('change', buildKeyboard);
+  volumeRange.addEventListener('input', ()=> { volume = parseFloat(volumeRange.value); master.gain.value = volume; });
+  stopAllBtn.addEventListener('click', stopAll);
+
+  // build and start
+  buildKeyboard();
+  animate();
+
+  // resume audio on user gesture
+  document.addEventListener('click', ()=> { if(ctx.state === 'suspended') ctx.resume(); }, {once:true});
+
+  // accessibility note: ensure ctx resume on first interaction
+})();
+</script>
+</body>
+</html>
+
